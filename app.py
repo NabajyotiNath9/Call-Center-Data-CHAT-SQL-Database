@@ -9,30 +9,49 @@ from sqlalchemy import create_engine
 import sqlite3
 from langchain_groq import ChatGroq
 
-# App Config
-st.set_page_config(page_title="LangChain: Chat with SQL DB", page_icon="🦜")
-st.title("🦜 LangChain: Chat with SQLite Database")
+# Page config
+st.set_page_config(page_title="📊 Chat with Call Center Data", page_icon="🦜", layout="wide")
+st.markdown("<h1 style='text-align: center;'>🦜 Chat with Call Center Data using LangChain + SQLite</h1>", unsafe_allow_html=True)
+st.divider()
 
-# Get Groq API Key
-api_key = st.sidebar.text_input("Enter Groq API Key", type="password")
+# Sidebar
+with st.sidebar:
+    st.markdown("### 🔑 Groq API Key")
+    api_key = st.text_input("Enter your Groq API Key", type="password")
 
+    st.markdown("### 📋 Options")
+    show_table = st.checkbox("Preview Call Center Table")
+
+    if st.button("🧹 Clear Chat History"):
+        st.session_state["messages"] = []
+
+# API Key guard
 if not api_key:
-    st.warning("Please enter your Groq API Key to continue.")
+    st.warning("⚠️ Please enter your Groq API Key in the sidebar to get started.")
     st.stop()
 
-# Initialize LLM
+# Load LLM
 llm = ChatGroq(groq_api_key=api_key, model_name="Llama3-8b-8192", streaming=True)
 
+# DB Connection
 @st.cache_resource(ttl="2h")
 def get_sqlite_db():
     db_file_path = (Path(__file__).parent / "call_center.db").absolute()
     creator = lambda: sqlite3.connect(f"file:{db_file_path}?mode=ro", uri=True)
     return SQLDatabase(create_engine("sqlite:///", creator=creator))
 
-# Connect to SQLite DB
 db = get_sqlite_db()
 
-# SQL Agent Setup
+# Show table preview
+if show_table:
+    try:
+        with st.expander("📄 Preview of `CALL_CENTER` Table", expanded=True):
+            preview_data = db.run("SELECT * FROM CALL_CENTER LIMIT 10")
+            st.dataframe(preview_data, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not load table: {e}")
+
+# Agent
 toolkit = SQLDatabaseToolkit(db=db, llm=llm)
 agent = create_sql_agent(
     llm=llm,
@@ -41,24 +60,31 @@ agent = create_sql_agent(
     agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
 )
 
-# Chat Session Setup
-if "messages" not in st.session_state or st.sidebar.button("Clear chat history"):
-    st.session_state["messages"] = [{"role": "assistant", "content": "Ask me anything about the call center data 📊"}]
+# Chat history
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [
+        {"role": "assistant", "content": "👋 Hi! Ask me anything about the call center database 📞"}
+    ]
 
+# Display message history
 for msg in st.session_state["messages"]:
-    st.chat_message(msg["role"]).write(msg["content"])
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-user_input = st.chat_input("Ask a question about the database...")
+# Chat input
+user_input = st.chat_input("Ask something like: 'What's the average Answer Rate?'")
 
 if user_input:
     st.session_state["messages"].append({"role": "user", "content": user_input})
-    st.chat_message("user").write(user_input)
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
     with st.chat_message("assistant"):
         stream_handler = StreamlitCallbackHandler(st.container())
         try:
             response = agent.run(user_input, callbacks=[stream_handler])
         except Exception as e:
-            response = f"⚠️ Error: {str(e)}"
+            response = f"⚠️ Something went wrong: `{e}`"
+
         st.session_state["messages"].append({"role": "assistant", "content": response})
-        st.write(response)
+        st.markdown(response)
